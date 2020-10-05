@@ -1,0 +1,28 @@
+<launch>
+  <!-- launch speech recognition -->
+  <rosparam>
+    <!-- We use rosbag which contains /speech_audio, which many /audio topics stuck together -->
+    <!-- Therefore, we need long buffer size for this test -->
+    /speech_recognition/buffer_size: 200000
+  </rosparam>
+  <include file="$(find ros_speech_recognition)/launch/speech_recognition.launch">
+    <arg name="launch_sound_play" value="false" />
+    <arg name="launch_audio_capture" value="false" />
+    <arg name="audio_topic" value="/speech_audio" />
+    <arg name="language" value="ja" />
+    <arg name="continuous" value="true" />
+  </include>
+
+  <!-- launch bag file -->
+  <node name="rosbag_play"
+        pkg="rosbag" type="play"
+        args="$(find ros_speech_recognition)/test/data/konnichiwa.bag --loop">
+  </node>
+
+  <test test-name="test_ros_speech_recognition"
+        name="test_ros_speech_recognition"
+        pkg="jsk_tools"  type="test_topic_published.py" >
+    <param name="~topic_0" value="/Tablet/voice" />
+    <param name="~timeout_0" value="30" />
+  </test>
+</launch>

@@ -1,0 +1,44 @@
+<launch>
+  <arg name="launch_sound_play" default="true" />
+  <arg name="launch_audio_capture" default="true" />
+
+  <arg name="audio_topic" default="/audio" />
+  <arg name="n_channel" default="1" />
+  <arg name="depth" default="16" />
+  <arg name="sample_rate" default="16000" />
+  <arg name="device" default="" />
+  <arg name="model" default="small-en-us-0.4" />
+
+  <!-- sound play -->
+  <node name="sound_play" pkg="sound_play" type="soundplay_node.py"
+        if="$(arg launch_sound_play)"
+        respawn="true">
+    <remap from="robotsound" to="sound_play" />
+  </node>
+
+  <!-- audio capture from microphone -->
+  <node name="audio_capture" pkg="audio_capture" type="audio_capture"
+        if="$(arg launch_audio_capture)"
+        respawn="true">
+    <rosparam subst_value="true">
+      format: wave
+      channels: $(arg n_channel)
+      depth: $(arg depth)
+      sample_rate: $(arg sample_rate)
+      device: $(arg device)
+    </rosparam>
+  </node>
+
+  <node name="speech_recognition"
+        pkg="ros_vosk" type="vosk_node.py"
+        respawn="true"
+        output="screen">
+    <rosparam subst_value="true">
+      audio_topic: $(arg audio_topic)
+      n_channel: $(arg n_channel)
+      depth: $(arg depth)
+      sample_rate: $(arg sample_rate)
+      model: $(arg model)
+    </rosparam>
+  </node>
+</launch>
