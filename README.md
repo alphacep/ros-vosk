@@ -37,7 +37,7 @@ A ROS package for speech-to-text services based on [Vosk](https://gtihub.com/alp
   ```
   or by running:
   ```bash
-  rosrun vosk_ros vosk_node.py
+  rosrun ros_vosk vosk_node.py
   ```
 
 ## Interface
@@ -47,7 +47,7 @@ A ROS package for speech-to-text services based on [Vosk](https://gtihub.com/alp
 * speech_recognition/final_result   -> vosk_node.py publishes a simple string with the final result
 * speech_recognition/partial_result -> vosk_node.py publishes a simple string with the partial result
 * tts/status -> tts_engine.py publishes the state of the engine. True if it is speaking False if it is not. If the status is true vosk_node won't process the audio stream so it won't listen to itself 
-* tts/phrase -> tts_engine.py subscribes to this topic in order to speake the given string. Name your desire and it shall be heard by all in the room..
+* tts/phrase -> tts_engine.py subscribes to this topic in order to speak the given string. Name your desire and it shall be heard by all in the room..
 
 ## Author
 Angelo Antikatzidis <an.antikatzidis@gmail.com>
