@@ -1,32 +1,31 @@
 <?xml version="1.0"?>
-<package>
+<package format="2">
   <name>ros_vosk</name>
   <version>2.1.21</version>
   <description>ROS wrapper for Vosk</description>
   <url type="website">https://pypi.python.org/pypi/vosk/</url>
 
   <maintainer email="contact@alphacephei.com">Alpha Cephei Inc.</maintainer>
+  <maintainer email="an.antikatzidis@gmail.com">Angelo Antikatzidis</maintainer>
   <license>Apache 2</license>
+  <author email="an.antikatzidis@gmail.com">Angelo Antikatzidis.</author>
   <author email="contact@alphacephei.com">Alpha Cephei Inc.</author>
-
+  
+   
   <buildtool_depend>catkin</buildtool_depend>
-
-  <build_depend>catkin_virtualenv</build_depend>
-  <build_depend>dynamic_reconfigure</build_depend>
-  <build_depend>speech_recognition_msgs</build_depend>
-  <build_depend>g++-static</build_depend>
-
-  <run_depend>audio_capture</run_depend>
-  <run_depend>audio_common_msgs</run_depend>
-  <run_depend>dynamic_reconfigure</run_depend>
-  <run_depend>flac</run_depend>
-  <run_depend>python-vosk-pip</run_depend>
-  <run_depend>sound_play</run_depend>
-  <run_depend>speech_recognition_msgs</run_depend>
-
-  <test_depend>rostest</test_depend>
-  <test_depend>roslaunch</test_depend>
-
+  
+  <build_depend>message_generation</build_depend>
+  <build_depend>rospy</build_depend>
+  <build_depend>std_msgs</build_depend>
+  
+  <build_export_depend>rospy</build_export_depend>
+  <build_export_depend>std_msgs</build_export_depend>
+  
+  <exec_depend>message_runtime</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>message_generation</exec_depend>
+  
   <export>
     <pip_requirements>requirements.txt</pip_requirements>
   </export>

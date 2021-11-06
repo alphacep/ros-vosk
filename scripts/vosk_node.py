@@ -1,229 +1,191 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Copyright: Yuki Furuta <furushchev@jsk.imi.i.u-tokyo.ac.jp>
 
-import actionlib
-import rospy
+# Intergrated by Angelo Antikatzidis https://github.com/a-prototype/vosk_ros
+# Source code based on https://github.com/alphacep/vosk-api/blob/master/python/example/test_microphone.py from VOSK's example code
+
+# Tuned for the python flavor of VOSK: vosk-0.3.31
+# If you do not have vosk then please install it by running $ pip3 install vosk
+# If you have a previous version of vosk installed then update it by running $ pip3 install vosk --upgrade
+# Tested on ROS Noetic & Melodic. Please advise the "readme" for using it with ROS Melodic 
+
+# This is a node that intergrates VOSK with ROS and supports a TTS engine to be used along with it
+# When the TTS engine is speaking some words, the recognizer will stop listenning to the audio stream so it won't listen to it self :)
+
+# It publishes to the topic speech_recognition/vosk_result a custom "speech_recognition" message
+# It publishes to the topic speech_recognition/final_result a simple string
+# It publishes to the topic speech_recognition/partial_result a simple string
+
+
+import os
+import sys
 import json
-import array
+import queue
 import vosk
+import sounddevice as sd
+from mmap import MAP_SHARED
 
-from threading import Lock
+import rospy
+import rospkg
+from vosk_ros.msg import speech_recognition
+from std_msgs.msg import String, Bool
 
-from audio_common_msgs.msg import AudioData
-from sound_play.msg import SoundRequest, SoundRequestAction, SoundRequestGoal
-
-from speech_recognition_msgs.msg import SpeechRecognitionCandidates
-from speech_recognition_msgs.srv import SpeechRecognition
-from speech_recognition_msgs.srv import SpeechRecognitionResponse
-
-from dynamic_reconfigure.server import Server
-
-class ROSVosk(object):
+class vosk_sr():
     def __init__(self):
-        self.default_duration = rospy.get_param("~duration", 10.0)
-        self.engine = None
-        self.recognizer = SR.Recognizer()
-        self.audio = ROSAudio(topic_name=rospy.get_param("~audio_topic", "audio"),
-                              depth=rospy.get_param("~depth", 16),
-                              n_channel=rospy.get_param("~n_channel", 1),
-                              sample_rate=rospy.get_param("~sample_rate", 16000),
-                              buffer_size=rospy.get_param("~buffer_size", 10240))
+        rospack = rospkg.RosPack()
+        rospack.list()
+        package_path = rospack.get_path('ros_vosk')
+        
+        model_path = '/models/'
+        model_dir = package_path + model_path
+        model = 'vosk-model-small-en-us-0.15' #change the name of the model to match the downloaded model's name
 
-        # initialize sound play client
-        self.act_sound = actionlib.SimpleActionClient("sound_play", SoundRequestAction)
-        if not self.act_sound.wait_for_server(rospy.Duration(5.0)):
-            rospy.logwarn("Failed to find sound_play action. Disabled audio alert")
-            self.act_sound = None
-        self.signals = {
-            "start": rospy.get_param("~start_signal",
-                                     "/usr/share/sounds/ubuntu/stereo/bell.ogg"),
-            "recognized": rospy.get_param("~recognized_signal",
-                                          "/usr/share/sounds/ubuntu/stereo/button-toggle-on.ogg"),
-            "success": rospy.get_param("~success_signal",
-                                       "/usr/share/sounds/ubuntu/stereo/message-new-instant.ogg"),
-            "timeout": rospy.get_param("~timeout_signal",
-                                       "/usr/share/sounds/ubuntu/stereo/window-slide.ogg"),
-        }
+        if not os.path.exists(model_dir+model):
+            print ("Please download a model for your language from https://alphacephei.com/vosk/models")
+            print ("and unpack as 'model' in the folder /models.")
+            rospy.signal_shutdown('no model installed!')
+            exit()
+        
+        self.tts_status = False
 
-        self.dyn_srv = Server(Config, self.config_callback)
+        # ROS node initialization
+        
+        self.pub_vosk = rospy.Publisher('speech_recognition/vosk_result',speech_recognition, queue_size=10)
+        self.pub_final = rospy.Publisher('speech_recognition/final_result',String, queue_size=10)
+        self.pub_partial = rospy.Publisher('speech_recognition/partial_result',String, queue_size=10)
 
-        self.stop_fn = None
-        self.continuous = rospy.get_param("~continuous", False)
-        if self.continuous:
-            rospy.loginfo("Enabled continuous mode")
-            self.pub = rospy.Publisher("/Tablet/voice",
-                                       SpeechRecognitionCandidates,
-                                       queue_size=1)
-        else:
-            self.srv = rospy.Service("speech_recognition",
-                                     SpeechRecognition,
-                                     self.speech_recognition_srv_cb)
+        self.rate = rospy.Rate(100)
 
-    def config_callback(self, config, level):
-        # config for engine
-        self.language = config.language
-        if self.engine != config.engine:
-            self.args = {}
-            self.engine = config.engine
+        rospy.on_shutdown(self.cleanup)
 
-        # config for adaptive thresholding
-        self.dynamic_energy_threshold = config.dynamic_energy_threshold
-        if self.dynamic_energy_threshold:
-            config.energy_threshold = self.recognizer.energy_threshold
-        else:
-            self.recognizer.energy_threshold = config.energy_threshold
-        self.recognizer.dynamic_energy_adjustment_damping = config.dynamic_energy_adjustment_damping
-        self.recognizer.dynamic_energy_ratio = config.dynamic_energy_ratio
+        model_name = rospy.get_param('vosk/model',model)
+        if not rospy.has_param('vosk/model'):
+            rospy.set_param('vosk/model', model_name)
 
-        # config for timeout
-        if config.listen_timeout > 0.0:
-            self.listen_timeout = config.listen_timeout
-        else:
-            self.listen_timeout = None
-        if config.phrase_time_limit > 0.0:
-            self.phrase_time_limit = config.phrase_time_limit
-        else:
-            self.phrase_time_limit = None
-        if config.operation_timeout > 0.0:
-            self.recognizer.operation_timeout = config.operation_timeout
-        else:
-            self.recognizer.operation_timeout = None
+        self.msg = speech_recognition()
 
-        # config for VAD
-        if config.pause_threshold < config.non_speaking_duration:
-            config.pause_threshold = config.non_speaking_duration
-        self.recognizer.pause_threshold = config.pause_threshold
-        self.recognizer.non_speaking_duration = config.non_speaking_duration
-        self.recognizer.phrase_threshold = config.phrase_threshold
+        self.q = queue.Queue()
 
-        return config
+        self.input_dev_num = sd.query_hostapis()[0]['default_input_device']
+        if self.input_dev_num == -1:
+            rospy.logfatal('No input device found')
+            raise ValueError('No input device found, device number == -1')
 
-    def play_sound(self, key, timeout=5.0):
-        if self.act_sound is None:
-            return
-        req = SoundRequest()
-        req.sound = SoundRequest.PLAY_FILE
-        req.command = SoundRequest.PLAY_ONCE
-        if hasattr(SoundRequest, 'volume'): # volume is added from 0.3.0 https://github.com/ros-drivers/audio_common/commit/da9623414f381642e52f59701c09928c72a54be7#diff-fe2d85580f1ccfed4e23a608df44a7f7
-            req.volume = 1.0
-        req.arg = self.signals[key]
-        goal = SoundRequestGoal(sound_request=req)
-        self.act_sound.send_goal_and_wait(goal, rospy.Duration(timeout))
+        device_info = sd.query_devices(self.input_dev_num, 'input')
+        # soundfile expects an int, sounddevice provides a float:
+        
+        self.samplerate = int(device_info['default_samplerate'])
+        rospy.set_param('vosk/sample_rate', self.samplerate)
 
-    def recognize(self, audio):
-        recog_func = None
-        if self.engine == Config.SpeechRecognition_Google:
-            if not self.args:
-                self.args = {'key': rospy.get_param("~google_key", None)}
-            recog_func = self.recognizer.recognize_google
-        elif self.engine == Config.SpeechRecognition_GoogleCloud:
-            if not self.args:
-                credentials_path = rospy.get_param("~google_cloud_credentials_json", None)
-                if credentials_path is not None:
-                    with open(credentials_path) as j:
-                        credentials_json = j.read()
-                else:
-                    credentials_json = None
-                self.args = {'credentials_json': credentials_json,
-                             'preferred_phrases': rospy.get_param('~google_cloud_preferred_phrases', None)}
-            recog_func = self.recognizer.recognize_google_cloud
-        elif self.engine == Config.SpeechRecognition_Sphinx:
-            recog_func = self.recognizer.recognize_sphinx
-        elif self.engine == Config.SpeechRecognition_Wit:
-            recog_func = self.recognizer.recognize_wit
-        elif self.engine == Config.SpeechRecognition_Bing:
-            if not self.args:
-                self.args = {'key': rospy.get_param("~bing_key")}
-            recog_func = self.recognizer.recognize_bing
-        elif self.engine == Config.SpeechRecognition_Houndify:
-            recog_func = self.recognizer.recognize_houndify
-        elif self.engine == Config.SpeechRecognition_IBM:
-            recog_func = self.recognizer.recognize_ibm
+        self.model = vosk.Model(model_dir+model_name)
 
-        return recog_func(audio_data=audio, language=self.language, **self.args)
+        #TODO GPUInit automatically selects a CUDA device and allows multithreading.
+        # gpu = vosk.GpuInit() #TODO
 
-    def audio_cb(self, _, audio):
+    
+    def cleanup(self):
+        rospy.logwarn("Shutting down VOSK speech recognition node...")
+    
+    def stream_callback(self, indata, frames, time, status):
+        #"""This is called (from a separate thread) for each audio block."""
+        if status:
+            print(status, file=sys.stderr)
+        self.q.put(bytes(indata))
+        
+    def tts_get_status(self,msg):
+        self.tts_status = msg.data
+
+    def tts_status_listenner(self):
+        rospy.Subscriber('/tts/status', Bool, self.tts_get_status)
+
+    def speech_recognize(self):    
         try:
-            rospy.logdebug("Waiting for result... (Sent %d bytes)" % len(audio.get_raw_data()))
-            result = self.recognize(audio)
-            rospy.loginfo("Result: %s" % result.encode('utf-8'))
-            msg = SpeechRecognitionCandidates(transcript=[result])
-            self.pub.publish(msg)
-        except SR.UnknownValueError as e:
-            if self.dynamic_energy_threshold:
-                self.recognizer.adjust_for_ambient_noise(self.audio)
-                rospy.loginfo("Updated energy threshold to %f" % self.recognizer.energy_threshold)
-        except SR.RequestError as e:
-            rospy.logerr("Failed to recognize: %s" % str(e))
 
-    def start_speech_recognition(self):
-        if self.dynamic_energy_threshold:
-            with self.audio as src:
-                self.recognizer.adjust_for_ambient_noise(src)
-                rospy.loginfo("Set minimum energy threshold to {}".format(
-                    self.recognizer.energy_threshold))
-        self.stop_fn = self.recognizer.listen_in_background(
-            self.audio, self.audio_cb, phrase_time_limit=self.phrase_time_limit)
-        rospy.on_shutdown(self.on_shutdown)
+            with sd.RawInputStream(samplerate=self.samplerate, blocksize=16000, device=self.input_dev_num, dtype='int16',
+                               channels=1, callback=self.stream_callback):
+                rospy.logdebug('Started recording')
+                
+                rec = vosk.KaldiRecognizer(self.model, self.samplerate)
+                print("Vosk is ready to listen!")
+                isRecognized = False
+                isRecognized_partially = False
+                
+            
+                while not rospy.is_shutdown():
+                    self.tts_status_listenner()
 
-    def on_shutdown(self):
-        if self.stop_fn is not None:
-            self.stop_fn()
+                    if self.tts_status == True:
+                        # If the text to speech is operating, clear the queue
+                        with self.q.mutex:
+                            self.q.queue.clear()
+                        rec.Reset()
 
-    def speech_recognition_srv_cb(self, req):
-        res = SpeechRecognitionResponse()
+                    elif self.tts_status == False:
+                        data = self.q.get()
+                        if rec.AcceptWaveform(data):
 
-        duration = req.duration
-        if duration <= 0.0:
-            duration = self.default_duration
+                            # In case of final result
+                            result = rec.FinalResult()
 
-        with self.audio as src:
+                            diction = json.loads(result)
+                            lentext = len(diction["text"])
 
-            if not req.quiet:
-                self.play_sound("start", 0.1)
+                            if lentext > 2:
+                                result_text = diction["text"]
+                                rospy.loginfo(result_text)
+                                isRecognized = True
+                            else:
+                                isRecognized = False
+                            # Resets current results so the recognition can continue from scratch
+                            rec.Reset()
+                        else:
+                            # In case of partial result
+                            result_partial = rec.PartialResult()
+                            if (len(result_partial) > 20):
 
-            start_time = rospy.Time.now()
-            while (rospy.Time.now() - start_time).to_sec() < duration:
-                rospy.loginfo("Waiting for speech...")
-                try:
-                    audio = self.recognizer.listen(
-                        src, timeout=self.listen_timeout, phrase_time_limit=self.phrase_time_limit)
-                except SR.WaitTimeoutError as e:
-                    rospy.logwarn(e)
-                    break
-                if not req.quiet:
-                    self.play_sound("recognized", 0.05)
-                rospy.loginfo("Waiting for result... (Sent %d bytes)" % len(audio.get_raw_data()))
+                                isRecognized_partially = True
+                                partial_dict = json.loads(result_partial)
+                                partial = partial_dict["partial"]
 
-                try:
-                    result = self.recognize(audio)
-                    rospy.loginfo("Result: %s" % result.encode('utf-8'))
-                    if not req.quiet:
-                        self.play_sound("success", 0.1)
-                    res.result = SpeechRecognitionCandidates(transcript=[result])
-                    return res
-                except SR.UnknownValueError:
-                    if self.dynamic_energy_threshold:
-                        self.recognizer.adjust_for_ambient_noise(src)
-                        rospy.loginfo("Set minimum energy threshold to %f" % self.recognizer.energy_threshold)
-                except SR.RequestError as e:
-                    rospy.logerr("Failed to recognize: %s" % str(e))
-                rospy.sleep(0.1)
-                if rospy.is_shutdown():
-                    break
+                        if (isRecognized is True):
 
-            # Timeout
-            if not req.quiet:
-                self.play_sound("timeout", 0.1)
-            return res
+                            self.msg.isSpeech_recognized = True
+                            self.msg.time_recognized = rospy.Time.now()
+                            self.msg.final_result = result_text
+                            self.msg.partial_result = "unk"
+                            self.pub_vosk.publish(self.msg)
+                            rospy.sleep(0.1)
+                            self.pub_final.publish(result_text)
+                            isRecognized = False
 
-    def spin(self):
-        self.start_speech_recognition()
-        rospy.spin()
 
+                        elif (isRecognized_partially is True):
+                            if partial != "unk":
+                                self.msg.isSpeech_recognized = False
+                                self.msg.time_recognized = rospy.Time.now()
+                                self.msg.final_result = "unk"
+                                self.msg.partial_result = partial
+                                self.pub_vosk.publish(self.msg)
+                                rospy.sleep(0.1)
+                                self.pub_partial.publish(partial)
+                                partial = "unk"
+                                isRecognized_partially = False
+                                
+
+
+        except Exception as e:
+            exit(type(e).__name__ + ': ' + str(e))
+        except KeyboardInterrupt:
+            rospy.loginfo("Stopping the VOSK speech recognition node...")
+            rospy.sleep(1)
+            print("node terminated")
 
 if __name__ == '__main__':
-    rospy.init_node("vosk")
-    rec = ROSVosk()
-    rec.spin()
+    try:
+        rospy.init_node('vosk', anonymous=False)
+        rec = vosk_sr()
+        rec.speech_recognize()
+    except (KeyboardInterrupt, rospy.ROSInterruptException) as e:
+        rospy.logfatal("Error occurred! Stopping the vosk speech recognition node...")
+        rospy.sleep(1)
+        print("node terminated")
