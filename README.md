@@ -1,7 +1,7 @@
 ros_vosk
 ======================
 
-A ROS package for speech-to-text services based on [Vosk](https://gtihub.com/alphacep/vosk-api)
+A ROS package for speech-to-text services based on [Vosk](https://github.com/alphacep/vosk-api)
 
 ## Tutorials
 
