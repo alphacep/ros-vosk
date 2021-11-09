@@ -27,7 +27,7 @@ from mmap import MAP_SHARED
 
 import rospy
 import rospkg
-from vosk_ros.msg import speech_recognition
+from ros_vosk.msg import speech_recognition
 from std_msgs.msg import String, Bool
 
 class vosk_sr():

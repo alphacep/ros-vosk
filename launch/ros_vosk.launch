@@ -1,7 +1,7 @@
 <launch>
 
   <node name="vosk_engine" pkg="ros_vosk" type="vosk_node.py" respawn="true" output="screen" />
-  <node name="tts_engine" pkg="ros_vosk" type="tts_node.py" respawn="true" output="screen" />
-  <rosparam file="$(find vosk_ros)/cfg/params.yaml" command="load" ns="" />
+  <node name="tts_engine" pkg="ros_vosk" type="tts_engine.py" respawn="true" output="screen" />
+  <rosparam file="$(find ros_vosk)/cfg/params.yaml" command="load" ns="" />
 
 </launch>
