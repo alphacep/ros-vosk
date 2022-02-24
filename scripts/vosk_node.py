@@ -30,6 +30,8 @@ import rospkg
 from ros_vosk.msg import speech_recognition
 from std_msgs.msg import String, Bool
 
+import vosk_ros_model_downloader as downloader
+
 class vosk_sr():
     def __init__(self):
         rospack = rospkg.RosPack()
@@ -38,13 +40,13 @@ class vosk_sr():
         
         model_path = '/models/'
         model_dir = package_path + model_path
-        model = 'vosk-model-small-en-us-0.15' #change the name of the model to match the downloaded model's name
-
+        model = "None" #change the name of the model to match the downloaded model's name
+        
         if not os.path.exists(model_dir+model):
-            print ("Please download a model for your language from https://alphacephei.com/vosk/models")
-            print ("and unpack as 'model' in the folder /models.")
-            rospy.signal_shutdown('no model installed!')
-            exit()
+            print ("No model found! Please use the GUI to download a model...")
+            model_downloader = downloader.model_downloader()
+            model_downloader.execute()
+            model = model_downloader.model_to_download
         
         self.tts_status = False
 
