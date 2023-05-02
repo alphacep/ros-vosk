@@ -34,20 +34,24 @@ import vosk_ros_model_downloader as downloader
 
 class vosk_sr():
     def __init__(self):
+        model_name = rospy.get_param('vosk/model', "vosk-model-small-en-us-0.15")
+
         rospack = rospkg.RosPack()
         rospack.list()
         package_path = rospack.get_path('ros_vosk')
         
-        model_path = '/models/'
-        model_dir = package_path + model_path
-        model = "None" #change the name of the model to match the downloaded model's name
+        models_dir = os.path.join(package_path, 'models')
+        model_path = os.path.join(models_dir, model_name)
         
-        if not os.path.exists(model_dir+model):
-            print ("No model found! Please use the GUI to download a model...")
+        if not os.path.exists(model_path):
+            print (f"model '{model_name}' not found in '{models_dir}'! Please use the GUI to download it or configure an available model...")
             model_downloader = downloader.model_downloader()
             model_downloader.execute()
-            model = model_downloader.model_to_download
+            model_name = model_downloader.model_to_download
         
+        if not rospy.has_param('vosk/model'):
+            rospy.set_param('vosk/model', model_name)
+
         self.tts_status = False
 
         # ROS node initialization
@@ -59,10 +63,6 @@ class vosk_sr():
         self.rate = rospy.Rate(100)
 
         rospy.on_shutdown(self.cleanup)
-
-        model_name = rospy.get_param('vosk/model',model)
-        if not rospy.has_param('vosk/model'):
-            rospy.set_param('vosk/model', model_name)
 
         self.msg = speech_recognition()
 
@@ -79,7 +79,7 @@ class vosk_sr():
         self.samplerate = int(device_info['default_samplerate'])
         rospy.set_param('vosk/sample_rate', self.samplerate)
 
-        self.model = vosk.Model(model_dir+model_name)
+        self.model = vosk.Model(model_path)
 
         #TODO GPUInit automatically selects a CUDA device and allows multithreading.
         # gpu = vosk.GpuInit() #TODO
